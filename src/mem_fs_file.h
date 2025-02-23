@@ -8,13 +8,12 @@
 struct MemoryFileData {
 };
 struct MemoryFile {
-	uint64_t ino = 0;
 	std::string name;
 	char* data = nullptr;
 	uint64_t size = 0;
 	mode_t mode = S_IFREG | 0111;
 	time_t ctime = 0;
 	time_t mtime = 0;
-	std::set<uint64_t>* children;
+	std::set<std::string>* children;
 };
 #endif	//MEM_FS_FILE_H
