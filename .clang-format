@@ -1,0 +1,23 @@
+BasedOnStyle: LLVM  # 基于 LLVM 代码风格
+IndentWidth: 4  # 缩进使用 8 个空格
+UseTab: Always  # 使用制表符代替空格
+TabWidth: 4  # 制表符等于 4 个空格
+BreakBeforeBraces: Linux  # 大括号风格符合 Linux 内核要求
+ColumnLimit: 120  # 每行代码最长 80 列
+AllowShortFunctionsOnASingleLine: None  # 禁止短函数写在同一行
+IndentCaseLabels: false  # case 语句不缩进
+SpaceAfterCStyleCast: false  # C 风格强制转换后不加空格
+PointerAlignment: Left  # 指针符号 `*` 靠左，如 `int *ptr;`
+AlignConsecutiveAssignments: false  # 禁止连续赋值对齐
+AlignConsecutiveDeclarations: false  # 禁止连续声明对齐
+AlignTrailingComments: true  # 使尾部注释对齐
+SortIncludes: false  # 不对 include 头文件排序
+SpacesBeforeTrailingComments: 2  # 代码与行尾注释之间至少有 2 个空格
+MaxEmptyLinesToKeep: 1  # 代码中最多保留 1 行空行
+ReflowComments: false  # 不自动换行重排注释
+BinPackArguments: false  # 禁止函数参数紧凑排列，强制每个参数换行
+BinPackParameters: false  # 禁止函数参数紧凑排列，强制每个参数换行
+AllowAllParametersOfDeclarationOnNextLine: false  # 强制函数参数声明时每个参数单独一行
+SpacesInAngles: false  # 禁止模板参数 `<>` 内两侧有空格
+BreakConstructorInitializers: BeforeComma  # 构造函数初始化列表逗号前换行
+BreakBeforeBinaryOperators: None  # 运算符优先保持在行尾

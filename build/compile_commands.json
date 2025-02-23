@@ -1,0 +1,14 @@
+[
+{
+  "directory": "/home/luyao/code/mem_fs/build",
+  "command": "/usr/local/bin/clang++   -g -std=c++17 -o CMakeFiles/mem_fs.dir/src/mem_fs_main.cpp.o -c /home/luyao/code/mem_fs/src/mem_fs_main.cpp",
+  "file": "/home/luyao/code/mem_fs/src/mem_fs_main.cpp",
+  "output": "CMakeFiles/mem_fs.dir/src/mem_fs_main.cpp.o"
+},
+{
+  "directory": "/home/luyao/code/mem_fs/build",
+  "command": "/usr/local/bin/clang++   -g -std=c++17 -o CMakeFiles/mem_fs.dir/src/mem_fs_options.cpp.o -c /home/luyao/code/mem_fs/src/mem_fs_options.cpp",
+  "file": "/home/luyao/code/mem_fs/src/mem_fs_options.cpp",
+  "output": "CMakeFiles/mem_fs.dir/src/mem_fs_options.cpp.o"
+}
+]

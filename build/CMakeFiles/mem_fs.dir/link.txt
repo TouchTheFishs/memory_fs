@@ -1,0 +1,1 @@
+/usr/local/bin/clang++ -g CMakeFiles/mem_fs.dir/src/mem_fs_main.cpp.o CMakeFiles/mem_fs.dir/src/mem_fs_options.cpp.o -o mem_fs  -lfuse3 

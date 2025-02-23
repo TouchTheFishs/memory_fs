@@ -1,0 +1,3 @@
+/home/luyao/code/mem_fs/build/CMakeFiles/mem_fs.dir
+/home/luyao/code/mem_fs/build/CMakeFiles/edit_cache.dir
+/home/luyao/code/mem_fs/build/CMakeFiles/rebuild_cache.dir
