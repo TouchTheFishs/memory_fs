@@ -10,7 +10,9 @@
             "type": "lldb",
             "request": "launch",
             "program": "${workspaceFolder}/build/mem_fs",
-            "args": [],
+            "args": [
+                "${workspaceFolder}/test/fs_test"
+            ],
             "cwd": "${workspaceFolder}",
             "preLaunchTask": "Build Project",
         },
