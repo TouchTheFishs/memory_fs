@@ -1,17 +1,20 @@
+#include <cerrno>
+#include <fcntl.h>
+#include <vector>
 #define FUSE_USE_VERSION 31
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <sys/stat.h>
 #include <fuse3/fuse.h>
-
 #include <map>
-#include <string>
 
 #include "mem_fs_file.h"
+
 using namespace std;
 
 std::map<std::string, MemoryFile> files;
+std::vector<Fd> fd_vec;
 
 static std::string find_parent_dir(const std::string& path)
 {
@@ -35,30 +38,64 @@ static std::string get_name_from_path(const std::string& path)
 	return path.substr(last_slash + 1);
 }
 
-static void stat_by_path(const std::string& path, struct stat* stbuf)
+static MemoryFile* get_file_by_path(const std::string& path)
 {
-	printf("stat %s\n", path.c_str());
 	auto file = files.find(path);
 	if (file == files.end()) {
-		stbuf->st_nlink = 0;
-		return;
+		return nullptr;
 	}
+	return &file->second;
+}
+
+static void stat_by_file(MemoryFile* file, struct stat* stbuf)
+{
 	memset(stbuf, 0, sizeof(struct stat));
-	stbuf->st_size = file->second.size;
-	stbuf->st_mode = file->second.mode;
-	stbuf->st_ctime = file->second.ctime;
-	stbuf->st_mtime = file->second.mtime;
+	stbuf->st_size = file->size;
+	stbuf->st_mode = file->mode;
+	stbuf->st_ctime = file->ctime;
+	stbuf->st_mtime = file->mtime;
 	stbuf->st_nlink = S_ISDIR(stbuf->st_mode) ? 2 : 1;
-	stbuf->st_size = S_ISDIR(stbuf->st_mode) ? 4096 : file->second.size;
+	stbuf->st_size = S_ISDIR(stbuf->st_mode) ? 4096 : file->size;
+}
+
+static int32_t stat_by_path(const std::string& path, struct stat* stbuf)
+{
+	printf("stat %s\n", path.c_str());
+	auto file = get_file_by_path(path);
+	if (file == nullptr) {
+		return -ENOENT;
+	}
+	stat_by_file(file, stbuf);
+	return 0;
+}
+
+static int32_t init_fd(const std::string& path, const mode_t mode, struct MemoryFile* file)
+{
+	for (size_t i = 0; i < fd_vec.size(); i++) {
+		if (fd_vec[i].used == false) {
+			fd_vec[i].used = true;
+			fd_vec[i].path = path;
+			fd_vec[i].mode = mode;
+			fd_vec[i].file = file;
+			return i;
+		}
+	}
+	Fd fd;
+	fd.used = true;
+	fd.path = path;
+	fd.mode = mode;
+	fd.file = file;
+	fd_vec.push_back(fd);
+	return fd_vec.size() - 1;
 }
 
 static int memfs_getattr(const char* path, struct stat* stbuf, struct fuse_file_info* fi)
 {
 	(void)fi;
-	stat_by_path(path, stbuf);
-	if (stbuf->st_nlink == 0) {
-		printf("getattr not found\n");
-		return -ENOENT;
+	int32_t ret = stat_by_path(path, stbuf);
+	if (ret != 0) {
+		printf("stat fail, ret is %d\n", ret);
+		return ret;
 	}
 	return 0;
 }
@@ -109,12 +146,12 @@ static int memfs_readdir(const char* path,
 static int memfs_mkdir(const char* path, mode_t mode)
 {
 	printf("mkdir %s\n", path);
-	auto parent = files.find(find_parent_dir(path));
-	if (parent == files.end()) {
+	auto parent = get_file_by_path(find_parent_dir(path));
+	if (parent == nullptr) {
 		return -ENOENT;
 	}
-	if (parent->second.children == nullptr) {
-		parent->second.children = new std::set<std::string>();
+	if (parent->children == nullptr) {
+		parent->children = new std::set<std::string>();
 	}
 	string dir_name = get_name_from_path(path);
 	printf("[warn] dir name is %s\n", dir_name.c_str());
@@ -126,19 +163,18 @@ static int memfs_mkdir(const char* path, mode_t mode)
 	new_dir.ctime = new_dir.mtime;
 	new_dir.children = nullptr;
 	files[path] = new_dir;
-	parent->second.children->insert(new_dir.name);
+	parent->children->insert(new_dir.name);
 	return 0;
 }
 
 static int memfs_rmdir(const char* path)
 {
 	printf("rmdir %s\n", path);
-	auto dir = files.find(path);
-	if (dir == files.end()) {
+	auto dir = get_file_by_path(path);
+	if (dir == nullptr) {
 		return -ENOENT;
 	}
-
-	if (dir->second.children != nullptr && dir->second.children->size() > 0) {
+	if (dir->children != nullptr && dir->children->size() > 0) {
 		return -ENOTEMPTY;
 	}
 
@@ -148,13 +184,14 @@ static int memfs_rmdir(const char* path)
 	}
 
 	if (dir_parent->second.children != nullptr) {
-		auto it = dir_parent->second.children->find(dir->second.name);
+		auto it = dir_parent->second.children->find(dir->name);
 		if (it != dir_parent->second.children->end()) {
 			dir_parent->second.children->erase(it);
 		}
 	}
-	if (dir->second.data != nullptr) {
-		delete dir->second.data;
+
+	if (dir->data != nullptr) {
+		delete dir->data;
 	}
 	files.erase(path);
 	return 0;
@@ -163,42 +200,93 @@ static int memfs_rmdir(const char* path)
 static int memfs_rename(const char* from, const char* to, unsigned int flags)
 {
 	printf("rename %s to %s\n", from, to);
-	auto src_file = files.find(from);
-	if (src_file == files.end()) {
+	auto src_file = get_file_by_path(from);
+	if (src_file == nullptr) {
 		return -ENOENT;
 	}
-	auto dst_file = files.find(to);
-	if (dst_file != files.end()) {
+	auto dst_file = get_file_by_path(to);
+	if (dst_file != nullptr) {
 		return -EEXIST;
 	}
-	auto dst_parent = files.find(find_parent_dir(to));
-	if (dst_parent == files.end()) {
+	auto dst_parent = get_file_by_path(find_parent_dir(to));
+	if (dst_parent == nullptr) {
 		return -ENOENT;
 	}
 
-	auto src_parent = files.find(find_parent_dir(from));
-	if (src_parent == files.end()) {
+	auto src_parent = get_file_by_path(find_parent_dir(from));
+	if (src_parent == nullptr) {
 		return -ENOENT;
 	}
 
-	src_file->second.name = get_name_from_path(to);
+	src_file->name = get_name_from_path(to);
 
-	if (src_parent->second.children != nullptr) {
-		auto it = src_parent->second.children->find(get_name_from_path(from));
-		if (it != src_parent->second.children->end()) {
-			src_parent->second.children->erase(it);
+	if (src_parent->children != nullptr) {
+		auto it = src_parent->children->find(get_name_from_path(from));
+		if (it != src_parent->children->end()) {
+			src_parent->children->erase(it);
 		}
 	}
 
-	if (dst_parent->second.children == nullptr) {
-		dst_parent->second.children = new std::set<std::string>();
+	if (dst_parent->children == nullptr) {
+		dst_parent->children = new std::set<std::string>();
 	}
 
-	dst_parent->second.children->insert(src_file->second.name);
+	dst_parent->children->insert(src_file->name);
 
-	files[to] = src_file->second;
+	files[to] = *src_file;
 	files.erase(from);
 	return 0;
+}
+
+static int memfs_open(const char* path, struct fuse_file_info* fi)
+{
+	printf("open %s\n", path);
+
+	auto file = get_file_by_path(path);
+	if (file == nullptr && fi->flags & O_CREAT) {
+		file = new MemoryFile();
+		file->name = get_name_from_path(path);
+		file->mode = S_IFREG | 0644;
+		file->ctime = time(nullptr);
+		file->mtime = file->ctime;
+		file->children = nullptr;
+		auto parent_dir = get_file_by_path(find_parent_dir(path));
+		if (parent_dir == nullptr) {
+			return -ENOENT;
+		}
+		if (parent_dir->children == nullptr) {
+			parent_dir->children = new std::set<std::string>();
+		}
+		parent_dir->children->insert(file->name);
+		files[path] = *file;
+	}
+
+	struct stat stbuf;
+	stat_by_file(file, &stbuf);
+
+	int access_mode = fi->flags & O_ACCMODE;
+
+	if (S_IFDIR & (stbuf.st_mode)) {
+		if (access_mode != O_RDONLY) {
+			return -EACCES;
+		}
+		return 0;
+	}
+
+	if (access_mode == O_RDONLY) {
+		if (!(stbuf.st_mode & S_IRUSR)) {
+			return -EACCES;
+		}
+	} else if (access_mode == O_WRONLY || access_mode == O_RDWR) {
+		if (!(stbuf.st_mode & S_IWUSR)) {
+			return -EACCES;
+		}
+	} else if (access_mode == O_RDWR) {
+		if (!(stbuf.st_mode & S_IWUSR) || !(stbuf.st_mode & S_IRUSR)) {
+			return -EACCES;
+		}
+	}
+	return init_fd(path, fi->flags, file);
 }
 
 static void* memfs_init(struct fuse_conn_info* conn, struct fuse_config* cfg)
@@ -214,6 +302,7 @@ static struct fuse_operations memfs_ops = {
 	.mkdir = memfs_mkdir,
 	.rmdir = memfs_rmdir,
 	.rename = memfs_rename,
+	.open = memfs_open,
 	.readdir = memfs_readdir,
 	.init = memfs_init,
 };
