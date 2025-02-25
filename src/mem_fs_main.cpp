@@ -399,6 +399,29 @@ static int memfs_release(const char* path, struct fuse_file_info* fi)
 	return 0;
 }
 
+static int memfs_unlink(const char* path)
+{
+	printf("unlink %s\n", path);
+	auto file = get_file_by_path(path);
+	if (file == nullptr) {
+		return -ENOENT;
+	}
+	auto parent = get_file_by_path(find_parent_dir(path));
+	if (parent == nullptr) {
+		return -ENOENT;
+	}
+	if (parent->children != nullptr) {
+		auto it = parent->children->find(file->name);
+		if (it != parent->children->end()) {
+			parent->children->erase(it);
+		}
+	}
+	if (file->data != nullptr) {
+		delete[] file->data;
+	}
+	files.erase(path);
+}
+
 static void* memfs_init(struct fuse_conn_info* conn, struct fuse_config* cfg)
 {
 	(void)conn;
@@ -421,6 +444,7 @@ static struct fuse_operations memfs_ops = {
 	.init = memfs_init,
 	.create = memfs_create,
 	.utimens = memfs_utimens,
+	.unlink = memfs_unlink,
 };
 
 int main(int argc, char* argv[])
