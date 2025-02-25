@@ -11,7 +11,7 @@
             "request": "launch",
             "program": "${workspaceFolder}/build/mem_fs",
             "args": [
-                "${workspaceFolder}/test/fs_test"
+                "${workspaceFolder}/build/mnt/fs"
             ],
             "cwd": "${workspaceFolder}",
             "preLaunchTask": "Build Project",

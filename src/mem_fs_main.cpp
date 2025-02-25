@@ -1,6 +1,8 @@
 #include <cerrno>
 #include <cstdint>
 #include <fcntl.h>
+#include <fstream>
+#include <type_traits>
 #include <vector>
 #define FUSE_USE_VERSION 31
 #include <cstdio>
@@ -8,11 +10,14 @@
 #include <cstring>
 #include <sys/stat.h>
 #include <fuse3/fuse.h>
+#include <filesystem>
+#include <iostream>
 #include <map>
 
 #include "mem_fs_file.h"
 
 using namespace std;
+namespace fs = std::filesystem;
 
 std::map<std::string, MemoryFile> files;
 std::vector<Fd> fd_vec;
@@ -88,6 +93,71 @@ static int32_t init_fd(const std::string& path, const mode_t mode, struct Memory
 	return fd_vec.size() - 1;
 }
 
+static uint64_t read_file_to_memory(const std::string& path, char* data)
+{
+	std::ifstream file(path, std::ios::binary | std::ios::ate);
+	if (!file) {
+		std::cout << "Failed to open file: " << path << std::endl;
+		return 0;
+	}
+	std::cout << "read file, file size: " << file.tellg() << std::endl;
+	uint64_t size = file.tellg();
+	data = new char[size + 1];
+	file.seekg(0, std::ios::beg);
+	file.read(data, size);
+	file.close();
+	data[size] = '\0';
+	return size;
+}
+
+static int32_t init_local_files_to_fs(const std::string& real_path, const std::string& relative_path)
+{
+	auto dir = get_file_by_path(relative_path);
+	if (dir == nullptr) {
+		std::cout << "Failed to find dir: " << relative_path << std::endl;
+		return -ENOENT;
+	}
+	if (!fs::exists(real_path)) {
+		std::cout << "Failed to find local dir: " << real_path << std::endl;
+		return -ENOENT;
+	}
+
+	if (!fs::is_directory(real_path)) {
+		std::cout << "local is not dir: " << real_path << std::endl;
+		return -ENOTDIR;
+	}
+	auto parent_dir = fs::directory_iterator(real_path);
+	if (dir->children == nullptr) {
+		dir->children = new std::set<std::string>();
+	}
+	struct stat statbuf;
+	for (auto& file : parent_dir) {
+		std::cout << "file path: " << file.path() << std::endl;
+		MemoryFile* file_ptr = new MemoryFile();
+		stat(file.path().c_str(), &statbuf);
+		file_ptr->name = file.path().filename().string() + "_local";
+		std::cout << "file name: " << file_ptr->name << std::endl;
+		file_ptr->mode = statbuf.st_mode;
+		file_ptr->mtime = statbuf.st_mtime;
+		file_ptr->ctime = statbuf.st_ctime;
+		file_ptr->atime = statbuf.st_atime;
+		if (!file.is_directory()) {
+			file_ptr->size = read_file_to_memory(file.path().string(), file_ptr->data);
+		} else {
+			file_ptr->size = 4096;
+		}
+		string file_relative_path;
+		if (relative_path.find_last_of('/') == relative_path.length() - 1) {
+			file_relative_path = relative_path + file_ptr->name;
+		} else {
+			file_relative_path = relative_path + "/" + file_ptr->name;
+		}
+		dir->children->insert(file_ptr->name);
+		files[file_relative_path] = *file_ptr;
+	}
+	return 0;
+}
+
 static int memfs_getattr(const char* path, struct stat* stbuf, struct fuse_file_info* fi)
 {
 	(void)fi;
@@ -112,19 +182,18 @@ static int memfs_readdir(const char* path,
 	if (string(path) != "/") {
 		// 父目录的内容
 		filler(buf, "..", nullptr, 0, static_cast<fuse_fill_dir_flags>(0));
-	} else {
-		printf("readdir root\n");
 	}
 	// 当前目录
 	filler(buf, ".", nullptr, 0, static_cast<fuse_fill_dir_flags>(0));
-	auto dir = files.find(path);
-	if (dir == files.end()) {
+	auto dir = get_file_by_path(path);
+	if (dir == nullptr) {
 		return -ENOENT;
 	}
-	if (dir->second.children == nullptr) {
+	if (dir->children == nullptr) {
 		return 0;
 	}
-	for (const auto& child_name : *dir->second.children) {
+	int32_t find_count = 0;
+	for (const auto& child_name : *dir->children) {
 		string child_path;
 		if (string(path).find_last_of('/') == string(path).length() - 1) {
 			child_path = string(path) + child_name;
@@ -134,10 +203,16 @@ static int memfs_readdir(const char* path,
 
 		printf("readdir child path is %s\n", child_path.c_str());
 		for (const auto& file : files) {
+			printf("readdir file path is %s\n", file.first.c_str());
 			if (child_path == file.first) {
+				find_count++;
 				filler(buf, child_name.c_str(), nullptr, 0, static_cast<fuse_fill_dir_flags>(0));
 			}
 		}
+	}
+	if (find_count != dir->children->size()) {
+		std::cout << "find count is not equal to children size" << std::endl;
+		return -EIO;
 	}
 	return 0;
 }
@@ -457,7 +532,9 @@ int main(int argc, char* argv[])
 	root.mtime = time(nullptr);
 	root.ctime = root.mtime;
 	root.children = nullptr;
+	root.is_init = true;
 	files["/"] = root;
+	init_local_files_to_fs(argv[1], "/");
 	// 启动 FUSE
 	return fuse_main(argc, argv, &memfs_ops, nullptr);
 }

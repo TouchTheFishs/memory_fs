@@ -17,6 +17,7 @@ struct MemoryFile {
 	time_t ctime = 0;
 	time_t mtime = 0;
 	time_t atime = 0;
+	bool is_init = false;
 	std::set<std::string>* children;
 };
 
