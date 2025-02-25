@@ -420,6 +420,7 @@ static int memfs_unlink(const char* path)
 		delete[] file->data;
 	}
 	files.erase(path);
+	return 0;
 }
 
 static void* memfs_init(struct fuse_conn_info* conn, struct fuse_config* cfg)
@@ -433,6 +434,7 @@ static void* memfs_init(struct fuse_conn_info* conn, struct fuse_config* cfg)
 static struct fuse_operations memfs_ops = {
 	.getattr = memfs_getattr,
 	.mkdir = memfs_mkdir,
+	.unlink = memfs_unlink,
 	.rmdir = memfs_rmdir,
 	.rename = memfs_rename,
 	.open = memfs_open,
@@ -444,7 +446,6 @@ static struct fuse_operations memfs_ops = {
 	.init = memfs_init,
 	.create = memfs_create,
 	.utimens = memfs_utimens,
-	.unlink = memfs_unlink,
 };
 
 int main(int argc, char* argv[])
