@@ -2,7 +2,8 @@
 #include <cstdint>
 #include <fcntl.h>
 #include <fstream>
-#include <type_traits>
+#include <mutex>
+#include <shared_mutex>
 #include <vector>
 #define FUSE_USE_VERSION 31
 #include <cstdio>
@@ -19,7 +20,8 @@
 using namespace std;
 namespace fs = std::filesystem;
 
-std::map<std::string, MemoryFile> files;
+std::map<std::string, MemoryFile*> files;
+std::shared_mutex rw_mutex;
 std::vector<Fd> fd_vec;
 
 static std::string find_parent_dir(const std::string& path)
@@ -46,11 +48,12 @@ static std::string get_name_from_path(const std::string& path)
 
 static MemoryFile* get_file_by_path(const std::string& path)
 {
+	std::shared_lock<std::shared_mutex> lock(rw_mutex);
 	auto file = files.find(path);
 	if (file == files.end()) {
 		return nullptr;
 	}
-	return &file->second;
+	return file->second;
 }
 
 static void stat_by_file(MemoryFile* file, struct stat* stbuf)
@@ -77,11 +80,16 @@ static int32_t stat_by_path(const std::string& path, struct stat* stbuf)
 
 static int32_t init_fd(const std::string& path, const mode_t mode, struct MemoryFile* file)
 {
+	if (file == nullptr) {
+		printf("init fd failed, file is nullptr\n");
+		return -1;
+	}
 	for (size_t i = 0; i < fd_vec.size(); i++) {
 		if (fd_vec[i].used == false) {
 			fd_vec[i].used = true;
 			fd_vec[i].mode = mode;
 			fd_vec[i].file = file;
+			printf("init fd success, fd is %zu\n", i);
 			return i;
 		}
 	}
@@ -90,10 +98,11 @@ static int32_t init_fd(const std::string& path, const mode_t mode, struct Memory
 	fd.mode = mode;
 	fd.file = file;
 	fd_vec.push_back(fd);
+	printf("init fd success, fd is %zu\n", fd_vec.size() - 1);
 	return fd_vec.size() - 1;
 }
 
-static uint64_t read_file_to_memory(const std::string& path, char* data)
+static uint64_t read_file_to_memory(const std::string& path, char*& data)
 {
 	std::ifstream file(path, std::ios::binary | std::ios::ate);
 	if (!file) {
@@ -143,6 +152,9 @@ static int32_t init_local_files_to_fs(const std::string& real_path, const std::s
 		file_ptr->atime = statbuf.st_atime;
 		if (!file.is_directory()) {
 			file_ptr->size = read_file_to_memory(file.path().string(), file_ptr->data);
+			if (file_ptr->size != 0 && file_ptr->data == nullptr) {
+				printf("file data is null\n");
+			}
 		} else {
 			file_ptr->size = 4096;
 		}
@@ -153,7 +165,8 @@ static int32_t init_local_files_to_fs(const std::string& real_path, const std::s
 			file_relative_path = relative_path + "/" + file_ptr->name;
 		}
 		dir->children->insert(file_ptr->name);
-		files[file_relative_path] = *file_ptr;
+		std::unique_lock<std::shared_mutex> lock(rw_mutex);
+		files[file_relative_path] = std::move(file_ptr);
 	}
 	return 0;
 }
@@ -192,7 +205,7 @@ static int memfs_readdir(const char* path,
 	if (dir->children == nullptr) {
 		return 0;
 	}
-	int32_t find_count = 0;
+	std::vector<string> find_names;
 	for (const auto& child_name : *dir->children) {
 		string child_path;
 		if (string(path).find_last_of('/') == string(path).length() - 1) {
@@ -202,15 +215,21 @@ static int memfs_readdir(const char* path,
 		}
 
 		printf("readdir child path is %s\n", child_path.c_str());
-		for (const auto& file : files) {
-			printf("readdir file path is %s\n", file.first.c_str());
-			if (child_path == file.first) {
-				find_count++;
-				filler(buf, child_name.c_str(), nullptr, 0, static_cast<fuse_fill_dir_flags>(0));
+		{
+			std::shared_lock<std::shared_mutex> lock(rw_mutex);
+			for (const auto& file : files) {
+				if (child_path == file.first) {
+					find_names.push_back(file.second->name);
+					break;
+				}
 			}
 		}
 	}
-	if (find_count != dir->children->size()) {
+	for (const auto& name : find_names) {
+		printf("readdir file path is %s\n", name.c_str());
+		filler(buf, name.c_str(), nullptr, 0, static_cast<fuse_fill_dir_flags>(0));
+	}
+	if (find_names.size() != dir->children->size()) {
 		std::cout << "find count is not equal to children size" << std::endl;
 		return -EIO;
 	}
@@ -229,15 +248,16 @@ static int memfs_mkdir(const char* path, mode_t mode)
 	}
 	string dir_name = get_name_from_path(path);
 	printf("[warn] dir name is %s\n", dir_name.c_str());
-	MemoryFile new_dir;
-	new_dir.name = dir_name;
-	new_dir.mode = S_IFDIR | mode;
-	new_dir.size = 4096;
-	new_dir.mtime = time(nullptr);
-	new_dir.ctime = new_dir.mtime;
-	new_dir.children = nullptr;
-	files[path] = new_dir;
-	parent->children->insert(new_dir.name);
+	MemoryFile* new_dir = new MemoryFile();
+	new_dir->name = dir_name;
+	new_dir->mode = S_IFDIR | mode;
+	new_dir->size = 4096;
+	new_dir->mtime = time(nullptr);
+	new_dir->ctime = new_dir->mtime;
+	new_dir->children = nullptr;
+	parent->children->insert(new_dir->name);
+	unique_lock<std::shared_mutex> lock(rw_mutex);
+	files[path] = std::move(new_dir);
 	return 0;
 }
 
@@ -252,21 +272,22 @@ static int memfs_rmdir(const char* path)
 		return -ENOTEMPTY;
 	}
 
-	auto dir_parent = files.find(find_parent_dir(path));
-	if (dir_parent == files.end()) {
+	auto dir_parent = get_file_by_path(find_parent_dir(path));
+	if (dir_parent == nullptr) {
 		return -ENOENT;
 	}
 
-	if (dir_parent->second.children != nullptr) {
-		auto it = dir_parent->second.children->find(dir->name);
-		if (it != dir_parent->second.children->end()) {
-			dir_parent->second.children->erase(it);
+	if (dir_parent->children != nullptr) {
+		auto it = dir_parent->children->find(dir->name);
+		if (it != dir_parent->children->end()) {
+			dir_parent->children->erase(it);
 		}
 	}
 
 	if (dir->data != nullptr) {
 		delete dir->data;
 	}
+	unique_lock<std::shared_mutex> lock(rw_mutex);
 	files.erase(path);
 	return 0;
 }
@@ -306,8 +327,8 @@ static int memfs_rename(const char* from, const char* to, unsigned int flags)
 	}
 
 	dst_parent->children->insert(src_file->name);
-
-	files[to] = *src_file;
+	unique_lock<std::shared_mutex> lock(rw_mutex);
+	files[to] = std::move(src_file);
 	files.erase(from);
 	return 0;
 }
@@ -332,9 +353,11 @@ static int memfs_open(const char* path, struct fuse_file_info* fi)
 			parent_dir->children = new std::set<std::string>();
 		}
 		parent_dir->children->insert(file->name);
-		files[path] = *file;
+		unique_lock<std::shared_mutex> lock(rw_mutex);
+		files[path] = std::move(file);
 	}
 
+	shared_lock<shared_mutex> lock(file->rw_mutex);
 	struct stat stbuf;
 	stat_by_file(file, &stbuf);
 
@@ -360,7 +383,9 @@ static int memfs_open(const char* path, struct fuse_file_info* fi)
 			return -EACCES;
 		}
 	}
-	fi->fh = init_fd(path, fi->flags, file);
+	int32_t fd = init_fd(path, fi->flags, file);
+	printf("open fd is %d\n", fd);
+	fi->fh = fd;
 	return 0;
 }
 
@@ -383,7 +408,8 @@ static int memfs_create(const char* path, mode_t mode, struct fuse_file_info* fi
 			parent_dir->children = new std::set<std::string>();
 		}
 		parent_dir->children->insert(file->name);
-		files[path] = *file;
+		unique_lock<std::shared_mutex> lock(rw_mutex);
+		files[path] = std::move(file);
 	}
 	return 0;
 }
@@ -394,9 +420,13 @@ static int memfs_read(const char* path, char* buf, size_t size, off_t offset, st
 	if (fi->fh == -1 || fi->fh >= fd_vec.size() || fd_vec[fi->fh].file == nullptr) {
 		return -EBADF;
 	}
-	auto file = fd_vec[fi->fh].file;
+	MemoryFile* file = fd_vec[fi->fh].file;
 	if (file == nullptr) {
 		return -EBADF;
+	}
+	shared_lock<shared_mutex> lock(file->rw_mutex);
+	if (file->size != 0 && file->data == nullptr) {
+		return -EIO;
 	}
 	if (offset >= file->size) {
 		return 0;
@@ -414,10 +444,11 @@ static int memfs_write(const char* path, const char* buf, size_t size, off_t off
 	if (fi->fh == -1 || fi->fh >= fd_vec.size() || fd_vec[fi->fh].file == nullptr) {
 		return -EBADF;
 	}
-	auto file = fd_vec[fi->fh].file;
+	MemoryFile* file = fd_vec[fi->fh].file;
 	if (file == nullptr) {
 		return -EBADF;
 	}
+	unique_lock<shared_mutex> lock(file->rw_mutex);
 	if (file->data == nullptr) {
 		file->data = new char[size + offset];
 		memset(file->data, 0, sizeof(char) * (size + offset));
@@ -451,6 +482,7 @@ static int memfs_utimens(const char* path, const struct timespec ts[2], struct f
 	if (file == nullptr) {
 		return -ENOENT;
 	}
+	unique_lock<std::shared_mutex> lock(file->rw_mutex);
 	file->atime = ts[0].tv_sec;
 	file->mtime = ts[1].tv_sec;
 	return 0;
@@ -494,6 +526,7 @@ static int memfs_unlink(const char* path)
 	if (file->data != nullptr) {
 		delete[] file->data;
 	}
+	unique_lock<std::shared_mutex> lock(rw_mutex);
 	files.erase(path);
 	return 0;
 }
@@ -526,14 +559,17 @@ static struct fuse_operations memfs_ops = {
 int main(int argc, char* argv[])
 {
 	// 初始化根目录
-	MemoryFile root;
-	root.name = "/";
-	root.mode = S_IFDIR | 0755;
-	root.mtime = time(nullptr);
-	root.ctime = root.mtime;
-	root.children = nullptr;
-	root.is_init = true;
-	files["/"] = root;
+	MemoryFile* root = new MemoryFile();
+	root->name = "/";
+	root->mode = S_IFDIR | 0755;
+	root->mtime = time(nullptr);
+	root->ctime = root->mtime;
+	root->children = nullptr;
+	root->is_init = true;
+	{
+		unique_lock<std::shared_mutex> lock(rw_mutex);
+		files["/"] = std::move(root);
+	}
 	init_local_files_to_fs(argv[1], "/");
 	// 启动 FUSE
 	return fuse_main(argc, argv, &memfs_ops, nullptr);

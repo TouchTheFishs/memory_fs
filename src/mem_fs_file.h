@@ -2,6 +2,7 @@
 #define MEM_FS_FILE_H
 #include <cstdint>
 #include <set>
+#include <shared_mutex>
 #include <stdint.h>
 #include <string>
 #include <sys/stat.h>
@@ -9,6 +10,8 @@
 struct MemoryFileData {
 };
 struct MemoryFile {
+	std::shared_mutex rw_mutex;
+	bool is_init = false;
 	std::string name;
 	char* data = nullptr;
 	uint64_t size = 0;
@@ -17,7 +20,6 @@ struct MemoryFile {
 	time_t ctime = 0;
 	time_t mtime = 0;
 	time_t atime = 0;
-	bool is_init = false;
 	std::set<std::string>* children;
 };
 
