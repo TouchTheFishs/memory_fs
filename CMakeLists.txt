@@ -13,6 +13,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # 添加可执行文件
 add_executable(mem_fs
     src/mem_fs_main.cpp
+    src/mem_fs_utils.cpp
 )
 
 target_link_libraries(mem_fs PRIVATE fuse3)

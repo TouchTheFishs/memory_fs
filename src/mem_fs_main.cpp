@@ -16,6 +16,7 @@
 #include <map>
 
 #include "mem_fs_file.h"
+#include "mem_fs_utils.h"
 
 using namespace std;
 namespace fs = std::filesystem;
@@ -69,7 +70,7 @@ static void stat_by_file(MemoryFile* file, struct stat* stbuf)
 
 static int32_t stat_by_path(const std::string& path, struct stat* stbuf)
 {
-	printf("stat %s\n", path.c_str());
+	LOGD("stat %s\n", path.c_str());
 	auto file = get_file_by_path(path);
 	if (file == nullptr) {
 		return -ENOENT;
@@ -81,7 +82,7 @@ static int32_t stat_by_path(const std::string& path, struct stat* stbuf)
 static int32_t init_fd(const std::string& path, const mode_t mode, struct MemoryFile* file)
 {
 	if (file == nullptr) {
-		printf("init fd failed, file is nullptr\n");
+		LOGE("init fd failed, file is nullptr\n");
 		return -1;
 	}
 	for (size_t i = 0; i < fd_vec.size(); i++) {
@@ -89,7 +90,7 @@ static int32_t init_fd(const std::string& path, const mode_t mode, struct Memory
 			fd_vec[i].used = true;
 			fd_vec[i].mode = mode;
 			fd_vec[i].file = file;
-			printf("init fd success, fd is %zu\n", i);
+			LOGD("init fd success, fd is %zu\n", i);
 			return i;
 		}
 	}
@@ -98,7 +99,7 @@ static int32_t init_fd(const std::string& path, const mode_t mode, struct Memory
 	fd.mode = mode;
 	fd.file = file;
 	fd_vec.push_back(fd);
-	printf("init fd success, fd is %zu\n", fd_vec.size() - 1);
+	LOGD("init fd success, fd is %zu\n", fd_vec.size() - 1);
 	return fd_vec.size() - 1;
 }
 
@@ -106,10 +107,10 @@ static uint64_t read_file_to_memory(const std::string& path, char*& data)
 {
 	std::ifstream file(path, std::ios::binary | std::ios::ate);
 	if (!file) {
-		std::cout << "Failed to open file: " << path << std::endl;
+		LOGE("Failed to open file: %s\n", path.c_str());
 		return 0;
 	}
-	std::cout << "read file, file size: " << file.tellg() << std::endl;
+	LOGD("read file, file size: %zu\n", file.tellg());
 	uint64_t size = file.tellg();
 	data = new char[size + 1];
 	file.seekg(0, std::ios::beg);
@@ -123,16 +124,16 @@ static int32_t init_local_files_to_fs(const std::string& real_path, const std::s
 {
 	auto dir = get_file_by_path(relative_path);
 	if (dir == nullptr) {
-		std::cout << "Failed to find dir: " << relative_path << std::endl;
+		LOGE("Failed to find dir: %s\n", relative_path.c_str());
 		return -ENOENT;
 	}
 	if (!fs::exists(real_path)) {
-		std::cout << "Failed to find local dir: " << real_path << std::endl;
+		LOGE("Failed to find local dir: %s\n", real_path.c_str());
 		return -ENOENT;
 	}
 
 	if (!fs::is_directory(real_path)) {
-		std::cout << "local is not dir: " << real_path << std::endl;
+		LOGE("local is not dir: %s\n", real_path.c_str());
 		return -ENOTDIR;
 	}
 	auto parent_dir = fs::directory_iterator(real_path);
@@ -141,20 +142,16 @@ static int32_t init_local_files_to_fs(const std::string& real_path, const std::s
 	}
 	struct stat statbuf;
 	for (auto& file : parent_dir) {
-		std::cout << "file path: " << file.path() << std::endl;
+		LOGD("file path: %s\n", file.path().c_str());
 		MemoryFile* file_ptr = new MemoryFile();
 		stat(file.path().c_str(), &statbuf);
 		file_ptr->name = file.path().filename().string() + "_local";
-		std::cout << "file name: " << file_ptr->name << std::endl;
 		file_ptr->mode = statbuf.st_mode;
 		file_ptr->mtime = statbuf.st_mtime;
 		file_ptr->ctime = statbuf.st_ctime;
 		file_ptr->atime = statbuf.st_atime;
 		if (!file.is_directory()) {
 			file_ptr->size = read_file_to_memory(file.path().string(), file_ptr->data);
-			if (file_ptr->size != 0 && file_ptr->data == nullptr) {
-				printf("file data is null\n");
-			}
 		} else {
 			file_ptr->size = 4096;
 		}
@@ -176,7 +173,7 @@ static int memfs_getattr(const char* path, struct stat* stbuf, struct fuse_file_
 	(void)fi;
 	int32_t ret = stat_by_path(path, stbuf);
 	if (ret != 0) {
-		printf("stat fail, ret is %d\n", ret);
+		LOGE("stat fail, ret is %d\n", ret);
 		return ret;
 	}
 	return 0;
@@ -191,7 +188,7 @@ static int memfs_readdir(const char* path,
 {
 	(void)offset;
 	(void)fi;
-	printf("readdir %s\n", path);
+	LOGD("readdir %s\n", path);
 	if (string(path) != "/") {
 		// 父目录的内容
 		filler(buf, "..", nullptr, 0, static_cast<fuse_fill_dir_flags>(0));
@@ -214,7 +211,7 @@ static int memfs_readdir(const char* path,
 			child_path = string(path) + "/" + child_name;
 		}
 
-		printf("readdir child path is %s\n", child_path.c_str());
+		LOGD("readdir child path is %s\n", child_path.c_str());
 		{
 			std::shared_lock<std::shared_mutex> lock(rw_mutex);
 			for (const auto& file : files) {
@@ -226,11 +223,11 @@ static int memfs_readdir(const char* path,
 		}
 	}
 	for (const auto& name : find_names) {
-		printf("readdir file path is %s\n", name.c_str());
+		LOGD("readdir file path is %s\n", name.c_str());
 		filler(buf, name.c_str(), nullptr, 0, static_cast<fuse_fill_dir_flags>(0));
 	}
 	if (find_names.size() != dir->children->size()) {
-		std::cout << "find count is not equal to children size" << std::endl;
+		LOGE("find count is not equal to children size\n");
 		return -EIO;
 	}
 	return 0;
@@ -238,7 +235,7 @@ static int memfs_readdir(const char* path,
 
 static int memfs_mkdir(const char* path, mode_t mode)
 {
-	printf("mkdir %s\n", path);
+	LOGD("mkdir %s\n", path);
 	auto parent = get_file_by_path(find_parent_dir(path));
 	if (parent == nullptr) {
 		return -ENOENT;
@@ -247,7 +244,6 @@ static int memfs_mkdir(const char* path, mode_t mode)
 		parent->children = new std::set<std::string>();
 	}
 	string dir_name = get_name_from_path(path);
-	printf("[warn] dir name is %s\n", dir_name.c_str());
 	MemoryFile* new_dir = new MemoryFile();
 	new_dir->name = dir_name;
 	new_dir->mode = S_IFDIR | mode;
@@ -263,7 +259,7 @@ static int memfs_mkdir(const char* path, mode_t mode)
 
 static int memfs_rmdir(const char* path)
 {
-	printf("rmdir %s\n", path);
+	LOGD("rmdir %s\n", path);
 	auto dir = get_file_by_path(path);
 	if (dir == nullptr) {
 		return -ENOENT;
@@ -294,7 +290,7 @@ static int memfs_rmdir(const char* path)
 
 static int memfs_rename(const char* from, const char* to, unsigned int flags)
 {
-	printf("rename %s to %s\n", from, to);
+	LOGD("rename %s to %s\n", from, to);
 	auto src_file = get_file_by_path(from);
 	if (src_file == nullptr) {
 		return -ENOENT;
@@ -335,7 +331,7 @@ static int memfs_rename(const char* from, const char* to, unsigned int flags)
 
 static int memfs_open(const char* path, struct fuse_file_info* fi)
 {
-	printf("open %s\n", path);
+	LOGD("open %s\n", path);
 
 	auto file = get_file_by_path(path);
 	if (file == nullptr && fi->flags & O_CREAT) {
@@ -383,15 +379,13 @@ static int memfs_open(const char* path, struct fuse_file_info* fi)
 			return -EACCES;
 		}
 	}
-	int32_t fd = init_fd(path, fi->flags, file);
-	printf("open fd is %d\n", fd);
-	fi->fh = fd;
+	fi->fh = init_fd(path, fi->flags, file);
 	return 0;
 }
 
 static int memfs_create(const char* path, mode_t mode, struct fuse_file_info* fi)
 {
-	printf("create %s\n", path);
+	LOGD("create %s\n", path);
 	auto file = get_file_by_path(path);
 	if (file == nullptr) {
 		file = new MemoryFile();
@@ -416,7 +410,7 @@ static int memfs_create(const char* path, mode_t mode, struct fuse_file_info* fi
 
 static int memfs_read(const char* path, char* buf, size_t size, off_t offset, struct fuse_file_info* fi)
 {
-	printf("read %s\n", path);
+	LOGD("read %s\n", path);
 	if (fi->fh == -1 || fi->fh >= fd_vec.size() || fd_vec[fi->fh].file == nullptr) {
 		return -EBADF;
 	}
@@ -440,7 +434,7 @@ static int memfs_read(const char* path, char* buf, size_t size, off_t offset, st
 
 static int memfs_write(const char* path, const char* buf, size_t size, off_t offset, struct fuse_file_info* fi)
 {
-	printf("write %s\n", path);
+	LOGD("write %s\n", path);
 	if (fi->fh == -1 || fi->fh >= fd_vec.size() || fd_vec[fi->fh].file == nullptr) {
 		return -EBADF;
 	}
@@ -474,10 +468,7 @@ static int memfs_write(const char* path, const char* buf, size_t size, off_t off
 static int memfs_utimens(const char* path, const struct timespec ts[2], struct fuse_file_info* fi)
 {
 	(void)fi;
-	//打印时间戳
-	printf("utimens %s\n", path);
-	printf("utimens atime: %ld.%ld\n", ts[0].tv_sec, ts[0].tv_nsec);
-	printf("utimens mtime: %ld.%ld\n", ts[1].tv_sec, ts[1].tv_nsec);
+	LOGD("utimens %s\n", path);
 	auto file = get_file_by_path(path);
 	if (file == nullptr) {
 		return -ENOENT;
@@ -491,13 +482,13 @@ static int memfs_utimens(const char* path, const struct timespec ts[2], struct f
 static int memfs_flush(const char* path, struct fuse_file_info* fi)
 {
 	(void)fi;
-	printf("flush %s\n", path);
+	LOGD("flush %s\n", path);
 	return 0;
 }
 
 static int memfs_release(const char* path, struct fuse_file_info* fi)
 {
-	printf("release %s\n", path);
+	LOGD("release %s\n", path);
 	if (fi->fh == -1 || fi->fh >= fd_vec.size() || fd_vec[fi->fh].file == nullptr) {
 		return -EBADF;
 	}
@@ -508,7 +499,7 @@ static int memfs_release(const char* path, struct fuse_file_info* fi)
 
 static int memfs_unlink(const char* path)
 {
-	printf("unlink %s\n", path);
+	LOGD("unlink %s\n", path);
 	auto file = get_file_by_path(path);
 	if (file == nullptr) {
 		return -ENOENT;
@@ -534,7 +525,7 @@ static int memfs_unlink(const char* path)
 static void* memfs_init(struct fuse_conn_info* conn, struct fuse_config* cfg)
 {
 	(void)conn;
-	printf("memfs_init\n");
+	LOGD("memfs_init\n");
 	return nullptr;
 }
 
@@ -558,6 +549,9 @@ static struct fuse_operations memfs_ops = {
 
 int main(int argc, char* argv[])
 {
+	// 打印argv所有的入参
+
+	setup_signal_handlers();
 	// 初始化根目录
 	MemoryFile* root = new MemoryFile();
 	root->name = "/";
@@ -570,7 +564,9 @@ int main(int argc, char* argv[])
 		unique_lock<std::shared_mutex> lock(rw_mutex);
 		files["/"] = std::move(root);
 	}
-	init_local_files_to_fs(argv[1], "/");
+	auto real_path = argv[1];
+	handleOption(argc, argv);
+	init_local_files_to_fs(real_path, "/");
 	// 启动 FUSE
 	return fuse_main(argc, argv, &memfs_ops, nullptr);
 }
