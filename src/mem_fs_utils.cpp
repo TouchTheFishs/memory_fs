@@ -1,10 +1,10 @@
+#include <cinttypes>
 #include <cstring>
 #include <ctime>
 #include <stdio.h>
 #include <stdarg.h>
 #include <stdlib.h>
 #include <signal.h>
-#include <string>
 #include <sys/syscall.h>
 #include <getopt.h>
 #include <execinfo.h>
@@ -13,26 +13,9 @@
 #include "mem_fs_utils.h"
 
 LogLevel current_log_level = LOG_LEVEL_NONE;
-static const char* log_level_strings[] = {"DEBUG", "INFO", "WARNING", "ERROR"};
+
 static __thread pid_t cached_tid = 0;
 
-struct option long_options[] = {{"fs_log", required_argument, 0, 0}, {0, 0, 0, 0}};
-
-void handleOption(int& argc, char**& argv)
-{
-	int opt;
-	int option_index = 0;
-	std::vector<char*> fuse_argv;
-	for (int i = 0; i < argc; i++) {
-		if (strcmp(argv[i], "--fs_log") == 0 && i + 1 < argc) {
-			set_log_level(argv[++i]);
-		} else {
-			fuse_argv.push_back(argv[i]);
-		}
-	}
-	argc = fuse_argv.size();
-	std::copy(fuse_argv.begin(), fuse_argv.end(), argv);
-}
 static pid_t get_tid()
 {
 	if (cached_tid == 0) {
@@ -55,6 +38,22 @@ void set_log_level(char* level)
 	}
 }
 
+const char* get_color(LogLevel level)
+{
+	switch (level) {
+	case LOG_LEVEL_ERROR:
+		return RED;
+	case LOG_LEVEL_WARNING:
+		return YELLOW;
+	case LOG_LEVEL_INFO:
+		return BLUE;
+	case LOG_LEVEL_DEBUG:
+		return WHITE;
+	default:
+		return RESET;
+	}
+}
+
 static const char* extract_filename(const char* full_path)
 {
 	const char* last_slash = strrchr(full_path, '/');
@@ -63,8 +62,9 @@ static const char* extract_filename(const char* full_path)
 
 void log_message(LogLevel level, const char* file, int line, const char* func, const char* format, ...)
 {
-	if (level < current_log_level)
+	if (level < current_log_level) {
 		return;
+	}
 	pid_t tid = get_tid();
 	pid_t pid = getpid();
 	const char* filename = extract_filename(file);
@@ -74,14 +74,13 @@ void log_message(LogLevel level, const char* file, int line, const char* func, c
 	struct tm* tm_now = localtime(&now);
 	char timestamp[20];
 	strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", tm_now);
-
-	// 添加日志级别输出 [ERROR]
-	printf("[%s][%d %d][%s][%s:%d][%s] ", timestamp, tid, pid, level_str, filename, line, func);
-
+	const char* color = get_color(level);
+	printf("%s[%s][%d %d][%s][%s:%d][%s] ", color, timestamp, tid, pid, level_str, filename, line, func);
 	va_list args;
 	va_start(args, format);
 	vprintf(format, args);
 	va_end(args);
+	printf(RESET "\n");
 }
 
 // dump crash trace

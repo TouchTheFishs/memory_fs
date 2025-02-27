@@ -7,11 +7,11 @@
 #include <string>
 #include <sys/stat.h>
 #include <sys/types.h>
-struct MemoryFileData {
-};
+
 struct MemoryFile {
 	std::shared_mutex rw_mutex;
 	bool is_init = false;
+	bool is_flush = false;
 	std::string name;
 	char* data = nullptr;
 	uint64_t size = 0;

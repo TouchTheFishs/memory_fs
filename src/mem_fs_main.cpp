@@ -24,6 +24,20 @@ namespace fs = std::filesystem;
 std::map<std::string, MemoryFile*> files;
 std::shared_mutex rw_mutex;
 std::vector<Fd> fd_vec;
+string real_path_perfix;
+
+static string get_real_path(const std::string& path)
+{
+	return real_path_perfix + path;
+}
+
+static string get_relative_path(const std::string& path)
+{
+	if (path.find(real_path_perfix) == 0) {
+		return path.substr(real_path_perfix.length());
+	}
+	return path;
+}
 
 static std::string find_parent_dir(const std::string& path)
 {
@@ -122,9 +136,10 @@ static uint64_t read_file_to_memory(const std::string& path, char*& data)
 
 static int32_t init_local_files_to_fs(const std::string& real_path, const std::string& relative_path)
 {
+	LOGI("init local file to fs, relative path is %s, real path is %s\n", relative_path.c_str(), real_path.c_str());
 	auto dir = get_file_by_path(relative_path);
 	if (dir == nullptr) {
-		LOGE("Failed to find dir: %s\n", relative_path.c_str());
+		LOGE("Failed to find relative dir: %s\n", relative_path.c_str());
 		return -ENOENT;
 	}
 	if (!fs::exists(real_path)) {
@@ -145,7 +160,7 @@ static int32_t init_local_files_to_fs(const std::string& real_path, const std::s
 		LOGD("file path: %s\n", file.path().c_str());
 		MemoryFile* file_ptr = new MemoryFile();
 		stat(file.path().c_str(), &statbuf);
-		file_ptr->name = file.path().filename().string() + "_local";
+		file_ptr->name = file.path().filename().string();
 		file_ptr->mode = statbuf.st_mode;
 		file_ptr->mtime = statbuf.st_mtime;
 		file_ptr->ctime = statbuf.st_ctime;
@@ -164,6 +179,7 @@ static int32_t init_local_files_to_fs(const std::string& real_path, const std::s
 		dir->children->insert(file_ptr->name);
 		std::unique_lock<std::shared_mutex> lock(rw_mutex);
 		files[file_relative_path] = std::move(file_ptr);
+		LOGD("init file to fs success, file path is %s\n", file_relative_path.c_str());
 	}
 	return 0;
 }
@@ -190,10 +206,8 @@ static int memfs_readdir(const char* path,
 	(void)fi;
 	LOGD("readdir %s\n", path);
 	if (string(path) != "/") {
-		// 父目录的内容
 		filler(buf, "..", nullptr, 0, static_cast<fuse_fill_dir_flags>(0));
 	}
-	// 当前目录
 	filler(buf, ".", nullptr, 0, static_cast<fuse_fill_dir_flags>(0));
 	auto dir = get_file_by_path(path);
 	if (dir == nullptr) {
@@ -210,12 +224,17 @@ static int memfs_readdir(const char* path,
 		} else {
 			child_path = string(path) + "/" + child_name;
 		}
-
 		LOGD("readdir child path is %s\n", child_path.c_str());
 		{
 			std::shared_lock<std::shared_mutex> lock(rw_mutex);
 			for (const auto& file : files) {
 				if (child_path == file.first) {
+					unique_lock<std::shared_mutex> lock(file.second->rw_mutex);
+					if ((file.second->mode & S_IFDIR) && file.second->is_init == false) {
+						auto real_path = get_real_path(child_path);
+						file.second->is_init = true;
+						init_local_files_to_fs(real_path, child_path);
+					}
 					find_names.push_back(file.second->name);
 					break;
 				}
@@ -547,12 +566,27 @@ static struct fuse_operations memfs_ops = {
 	.utimens = memfs_utimens,
 };
 
+void handleOption(int& argc, char**& argv)
+{
+	int opt;
+	int option_index = 0;
+	std::vector<char*> fuse_argv;
+	for (int i = 0; i < argc; i++) {
+		if (strcmp(argv[i], "--fs_log") == 0 && i + 1 < argc) {
+			set_log_level(argv[++i]);
+		} else if (strcmp(argv[i], "--targe") == 0 && i + 1 < argc) {
+			real_path_perfix = fs::absolute(argv[++i]);
+		} else {
+			fuse_argv.push_back(argv[i]);
+		}
+	}
+	argc = fuse_argv.size();
+	std::copy(fuse_argv.begin(), fuse_argv.end(), argv);
+}
+
 int main(int argc, char* argv[])
 {
-	// 打印argv所有的入参
-
 	setup_signal_handlers();
-	// 初始化根目录
 	MemoryFile* root = new MemoryFile();
 	root->name = "/";
 	root->mode = S_IFDIR | 0755;
@@ -564,9 +598,13 @@ int main(int argc, char* argv[])
 		unique_lock<std::shared_mutex> lock(rw_mutex);
 		files["/"] = std::move(root);
 	}
-	auto real_path = argv[1];
 	handleOption(argc, argv);
-	init_local_files_to_fs(real_path, "/");
+	LOGI("real path is %s\n", real_path_perfix.c_str());
+	if (real_path_perfix.find_last_of('/') == real_path_perfix.length() - 1) {
+		real_path_perfix = real_path_perfix.substr(0, real_path_perfix.length() - 1);
+	}
+	LOGI("memfs start\n");
+	init_local_files_to_fs(real_path_perfix, "/");
 	// 启动 FUSE
 	return fuse_main(argc, argv, &memfs_ops, nullptr);
 }
