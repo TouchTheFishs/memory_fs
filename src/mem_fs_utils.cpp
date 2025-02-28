@@ -1,6 +1,8 @@
-#include <cinttypes>
 #include <cstring>
 #include <ctime>
+#include <dlfcn.h>
+#include <cxxabi.h>
+#include <libgen.h>
 #include <stdio.h>
 #include <stdarg.h>
 #include <stdlib.h>
@@ -8,7 +10,6 @@
 #include <sys/syscall.h>
 #include <getopt.h>
 #include <execinfo.h>
-#include <vector>
 
 #include "mem_fs_utils.h"
 
@@ -83,21 +84,60 @@ void log_message(LogLevel level, const char* file, int line, const char* func, c
 	printf(RESET "\n");
 }
 
-// dump crash trace
 #define MAX_STACK_FRAMES 64
 
 void dump_backtrace()
 {
 	void* buffer[MAX_STACK_FRAMES];
-	int frames = backtrace(buffer, MAX_STACK_FRAMES);
-	char** symbols = backtrace_symbols(buffer, frames);
+	const int frames = backtrace(buffer, MAX_STACK_FRAMES);
+	const pid_t tid = static_cast<pid_t>(syscall(SYS_gettid));
+	fprintf(stderr, "\n[线程 %d] 调用栈追踪 (共 %d 帧):\n", tid, frames);
 
-	fprintf(stderr, "\n调用栈（共 %d 帧）:\n", frames);
-	for (int i = 0; i < frames; i++) {
-		fprintf(stderr, "[%d] %s\n", i, symbols[i]);
+	for (int i = 0; i < frames; ++i) {
+		Dl_info info = {};
+		const bool dladdr_ok = dladdr(buffer[i], &info);
+
+		fprintf(stderr, "#%-2d ", i);  // 序号与内容间留1空格
+
+		if (dladdr_ok && info.dli_fname) {
+			// 精简路径处理
+			char* fname_copy = strdup(info.dli_fname);
+			const char* base_name = basename(fname_copy);
+
+			// 计算相对偏移（不再显示绝对地址）
+			const size_t offset = reinterpret_cast<size_t>(buffer[i]) - reinterpret_cast<size_t>(info.dli_fbase);
+
+			fprintf(stderr, "%-16s 0x%012zX", base_name, reinterpret_cast<size_t>(info.dli_fbase));
+
+			// 显示紧凑的偏移量（移除前导零）
+			fprintf(stderr, "+0x%-7zx ", offset);
+
+			free(fname_copy);
+
+			// 符号解析
+			if (info.dli_sname) {
+				int status = 0;
+				char* demangled = abi::__cxa_demangle(info.dli_sname, nullptr, nullptr, &status);
+				const char* symbol = (status == 0) ? demangled : info.dli_sname;
+				fprintf(stderr, "@ %-20s", symbol);
+				if (status == 0 && demangled)
+					free(demangled);
+			} else {
+				fprintf(stderr, "@ %-20s", "<未知符号>");
+			}
+
+			// 显示符号地址（如果需要）
+			if (info.dli_saddr) {
+				fprintf(stderr, " [sym:0x%012zX]", reinterpret_cast<size_t>(info.dli_saddr));
+			}
+		} else {
+			// 无法解析时显示原始地址
+			fprintf(stderr, "<无法解析> [0x%14p]", buffer[i]);
+		}
+
+		fprintf(stderr, "\n");
 	}
-
-	free(symbols);
+	fflush(stderr);
 }
 
 void signal_handler(int sig)
@@ -111,11 +151,4 @@ void setup_signal_handlers()
 {
 	signal(SIGSEGV, signal_handler);
 	signal(SIGABRT, signal_handler);
-}
-
-void crash_function()
-{
-	// 人为制造崩溃（解引用空指针）
-	int* ptr = NULL;
-	*ptr = 42;
 }

@@ -1,8 +1,12 @@
 cmake_minimum_required(VERSION 3.8)  # 确保CMake版本支持C++17
 project(my_project LANGUAGES CXX)    # 明确指定C++项目
 
-# 设置构建类型为 Debug（确保生成调试符号）
-set(CMAKE_BUILD_TYPE Debug)  # 可选，也可通过命令行指定：cmake -DCMAKE_BUILD_TYPE=Debug ..
+
+# 使用 Debug 模式，确保生成调试符号
+set(CMAKE_BUILD_TYPE Debug)
+
+# 添加 -rdynamic 链接选项以确保符号可用
+set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -rdynamic")
 
 # 设置C++17标准，禁用编译器扩展
 set(CMAKE_CXX_STANDARD 17)
@@ -16,4 +20,4 @@ add_executable(mem_fs
     src/mem_fs_utils.cpp
 )
 
-target_link_libraries(mem_fs PRIVATE fuse3)
+target_link_libraries(mem_fs PRIVATE fuse3 dl)

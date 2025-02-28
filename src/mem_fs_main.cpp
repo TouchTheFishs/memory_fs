@@ -61,14 +61,19 @@ static std::string get_name_from_path(const std::string& path)
 	return path.substr(last_slash + 1);
 }
 
-static MemoryFile* get_file_by_path(const std::string& path)
+static MemoryFile* get_file_by_path_with_on_lock(const std::string& path)
 {
-	std::shared_lock<std::shared_mutex> lock(rw_mutex);
 	auto file = files.find(path);
 	if (file == files.end()) {
 		return nullptr;
 	}
 	return file->second;
+}
+
+static MemoryFile* get_file_by_path(const std::string& path)
+{
+	std::shared_lock<std::shared_mutex> lock(rw_mutex);
+	return get_file_by_path_with_on_lock(path);
 }
 
 static void stat_by_file(MemoryFile* file, struct stat* stbuf)
@@ -177,7 +182,7 @@ static int32_t init_local_files_to_fs(const std::string& real_path, const std::s
 			file_relative_path = relative_path + "/" + file_ptr->name;
 		}
 		dir->children->insert(file_ptr->name);
-		std::unique_lock<std::shared_mutex> lock(rw_mutex);
+		// not need lock for rw_mutex
 		files[file_relative_path] = std::move(file_ptr);
 		LOGD("init file to fs success, file path is %s\n", file_relative_path.c_str());
 	}
@@ -587,6 +592,12 @@ void handleOption(int& argc, char**& argv)
 int main(int argc, char* argv[])
 {
 	setup_signal_handlers();
+	handleOption(argc, argv);
+	LOGI("real path is %s\n", real_path_perfix.c_str());
+	if (real_path_perfix.find_last_of('/') == real_path_perfix.length() - 1) {
+		real_path_perfix = real_path_perfix.substr(0, real_path_perfix.length() - 1);
+	}
+	LOGI("memfs start\n");
 	MemoryFile* root = new MemoryFile();
 	root->name = "/";
 	root->mode = S_IFDIR | 0755;
@@ -597,14 +608,8 @@ int main(int argc, char* argv[])
 	{
 		unique_lock<std::shared_mutex> lock(rw_mutex);
 		files["/"] = std::move(root);
+		init_local_files_to_fs(real_path_perfix, "/");
 	}
-	handleOption(argc, argv);
-	LOGI("real path is %s\n", real_path_perfix.c_str());
-	if (real_path_perfix.find_last_of('/') == real_path_perfix.length() - 1) {
-		real_path_perfix = real_path_perfix.substr(0, real_path_perfix.length() - 1);
-	}
-	LOGI("memfs start\n");
-	init_local_files_to_fs(real_path_perfix, "/");
 	// 启动 FUSE
 	return fuse_main(argc, argv, &memfs_ops, nullptr);
 }
