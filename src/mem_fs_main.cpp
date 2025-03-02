@@ -16,7 +16,8 @@
 #include <map>
 
 #include "mem_fs_file.h"
-#include "mem_fs_utils.h"
+#include "log_utils.h"
+#include "timer.h"
 
 using namespace std;
 namespace fs = std::filesystem;
@@ -131,6 +132,7 @@ static uint64_t read_file_to_memory(const std::string& path, char*& data)
 	}
 	LOGD("read file, file size: %zu\n", file.tellg());
 	uint64_t size = file.tellg();
+	LOGI("read file, file size: %zu\n", size);
 	data = new char[size + 1];
 	file.seekg(0, std::ios::beg);
 	file.read(data, size);
@@ -142,7 +144,7 @@ static uint64_t read_file_to_memory(const std::string& path, char*& data)
 static int32_t init_local_files_to_fs(const std::string& real_path, const std::string& relative_path)
 {
 	LOGI("init local file to fs, relative path is %s, real path is %s\n", relative_path.c_str(), real_path.c_str());
-	auto dir = get_file_by_path(relative_path);
+	auto dir = get_file_by_path_with_on_lock(relative_path);
 	if (dir == nullptr) {
 		LOGE("Failed to find relative dir: %s\n", relative_path.c_str());
 		return -ENOENT;
@@ -170,8 +172,9 @@ static int32_t init_local_files_to_fs(const std::string& real_path, const std::s
 		file_ptr->mtime = statbuf.st_mtime;
 		file_ptr->ctime = statbuf.st_ctime;
 		file_ptr->atime = statbuf.st_atime;
-		if (!file.is_directory()) {
-			file_ptr->size = read_file_to_memory(file.path().string(), file_ptr->data);
+		if (!(file_ptr->mode & S_IFDIR)) {
+			file_ptr->size = statbuf.st_size;
+			read_file_to_memory(file.path().string(), file_ptr->data);
 		} else {
 			file_ptr->size = 4096;
 		}
@@ -480,6 +483,7 @@ static int memfs_write(const char* path, const char* buf, size_t size, off_t off
 			delete[] file->data;
 			file->data = new_data;
 			file->data_size = new_size;
+			file->need_flush = true;
 		}
 	}
 	if (offset + size > file->size) {
@@ -571,6 +575,28 @@ static struct fuse_operations memfs_ops = {
 	.utimens = memfs_utimens,
 };
 
+static void flush_files()
+{
+	LOGD("flush files\n");
+	shared_lock<std::shared_mutex> lock(rw_mutex);
+	for (const auto& file : files) {
+		if (file.second->need_flush != false) {
+			unique_lock<std::shared_mutex> lock(file.second->rw_mutex);
+			if (file.second->data != nullptr) {
+				std::ofstream out_file(get_real_path(file.first), std::ios::binary);
+				if (!out_file) {
+					LOGE("Failed to open file: %s\n", get_real_path(file.first).c_str());
+					return;
+				}
+				out_file.write(file.second->data, file.second->size);
+				out_file.close();
+				file.second->need_flush = false;
+				LOGD("flush file success, file path is %s\n", get_real_path(file.first).c_str());
+			}
+		}
+	}
+}
+
 void handleOption(int& argc, char**& argv)
 {
 	int opt;
@@ -610,6 +636,8 @@ int main(int argc, char* argv[])
 		files["/"] = std::move(root);
 		init_local_files_to_fs(real_path_perfix, "/");
 	}
+	Timer timer(flush_files, std::chrono::seconds(10));
+	timer.start_timer();
 	// 启动 FUSE
 	return fuse_main(argc, argv, &memfs_ops, nullptr);
 }

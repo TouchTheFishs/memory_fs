@@ -11,7 +11,7 @@
 #include <getopt.h>
 #include <execinfo.h>
 
-#include "mem_fs_utils.h"
+#include "log_utils.h"
 
 LogLevel current_log_level = LOG_LEVEL_NONE;
 
@@ -104,29 +104,43 @@ void dump_backtrace()
 			char* fname_copy = strdup(info.dli_fname);
 			const char* base_name = basename(fname_copy);
 
-			// 计算相对偏移（不再显示绝对地址）
+			// 计算相对偏移
 			const size_t offset = reinterpret_cast<size_t>(buffer[i]) - reinterpret_cast<size_t>(info.dli_fbase);
 
 			fprintf(stderr, "%-16s 0x%012zX", base_name, reinterpret_cast<size_t>(info.dli_fbase));
 
-			// 显示紧凑的偏移量（移除前导零）
+			// 显示紧凑的偏移量
 			fprintf(stderr, "+0x%-7zx ", offset);
 
 			free(fname_copy);
 
 			// 符号解析
+			const char* symbol = "<未知符号>";
+			char* demangled = nullptr;
 			if (info.dli_sname) {
 				int status = 0;
-				char* demangled = abi::__cxa_demangle(info.dli_sname, nullptr, nullptr, &status);
-				const char* symbol = (status == 0) ? demangled : info.dli_sname;
-				fprintf(stderr, "@ %-20s", symbol);
-				if (status == 0 && demangled)
-					free(demangled);
-			} else {
-				fprintf(stderr, "@ %-20s", "<未知符号>");
+				demangled = abi::__cxa_demangle(info.dli_sname, nullptr, nullptr, &status);
+				symbol = (status == 0) ? demangled : info.dli_sname;
+			}
+			fprintf(stderr, "@ %-20s", symbol);
+
+			// 使用 addr2line 解析行号信息
+			char cmd[1024];
+			snprintf(cmd, sizeof(cmd), "addr2line -e '%s' -pfC %zx 2>/dev/null", info.dli_fname, offset);
+
+			if (FILE* fp = popen(cmd, "r")) {
+				char line[512] = "";
+				if (fgets(line, sizeof(line), fp) && !strstr(line, "??")) {
+					line[strcspn(line, "\n")] = '\0';				// 去除换行符
+					fprintf(stderr, " \033[33m(%s)\033[0m", line);	// 黄色高亮
+				}
+				pclose(fp);
 			}
 
-			// 显示符号地址（如果需要）
+			if (demangled)
+				free(demangled);
+
+			// 显示符号地址
 			if (info.dli_saddr) {
 				fprintf(stderr, " [sym:0x%012zX]", reinterpret_cast<size_t>(info.dli_saddr));
 			}
