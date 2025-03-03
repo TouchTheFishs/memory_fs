@@ -483,12 +483,19 @@ static int memfs_write(const char* path, const char* buf, size_t size, off_t off
 			delete[] file->data;
 			file->data = new_data;
 			file->data_size = new_size;
-			file->need_flush = true;
 		}
 	}
 	if (offset + size > file->size) {
 		file->size = offset + size;
 	}
+	if (file->write_areas == nullptr) {
+		file->write_areas = new std::vector<int64_t*>();
+	}
+	int64_t* new_area = new int64_t[2];
+	new_area[0] = offset;
+	new_area[1] = offset + size;
+	file->write_areas->push_back(new_area);
+	file->need_flush = true;
 	std::memcpy(file->data + offset, buf, size);
 	return size;
 }
@@ -525,6 +532,31 @@ static int memfs_release(const char* path, struct fuse_file_info* fi)
 	return 0;
 }
 
+static int memfs_truncate(const char* path, off_t size, struct fuse_file_info* fi)
+{
+	LOGD("truncate %s\n", path);
+	auto file = get_file_by_path(path);
+	if (file == nullptr) {
+		return -ENOENT;
+	}
+	unique_lock<std::shared_mutex> lock(file->rw_mutex);
+	if (file->data != nullptr) {
+		if (size <= file->size) {
+			memset(file->data + size, 0, sizeof(char) * (file->data_size - size));
+		} else {
+			uint64_t new_size = size > file->data_size * 1.5 ? size : file->data_size * 1.5;
+			char* new_data = new char[new_size];
+			memset(new_data, 0, sizeof(char) * new_size);
+			std::memcpy(new_data, file->data, file->size);
+			delete[] file->data;
+			file->data = new_data;
+			file->data_size = new_size;
+		}
+	}
+	file->size = size;
+	return 0;
+}
+
 static int memfs_unlink(const char* path)
 {
 	LOGD("unlink %s\n", path);
@@ -545,6 +577,12 @@ static int memfs_unlink(const char* path)
 	if (file->data != nullptr) {
 		delete[] file->data;
 	}
+	if (file->write_areas != nullptr) {
+		for (auto& area : *file->write_areas) {
+			delete[] area;
+		}
+		delete file->write_areas;
+	}
 	unique_lock<std::shared_mutex> lock(rw_mutex);
 	files.erase(path);
 	return 0;
@@ -564,6 +602,7 @@ static struct fuse_operations memfs_ops = {
 	.unlink = memfs_unlink,
 	.rmdir = memfs_rmdir,
 	.rename = memfs_rename,
+	.truncate = memfs_truncate,
 	.open = memfs_open,
 	.read = memfs_read,
 	.write = memfs_write,
@@ -583,13 +622,16 @@ static void flush_files()
 		if (file.second->need_flush != false) {
 			unique_lock<std::shared_mutex> lock(file.second->rw_mutex);
 			if (file.second->data != nullptr) {
-				std::ofstream out_file(get_real_path(file.first), std::ios::binary);
-				if (!out_file) {
-					LOGE("Failed to open file: %s\n", get_real_path(file.first).c_str());
-					return;
+				for (auto& area : *file.second->write_areas) {
+					std::ofstream out_file(get_real_path(file.first), std::ios::binary | std::ios::app);
+					if (!out_file) {
+						LOGE("Failed to open file: %s\n", get_real_path(file.first).c_str());
+						return;
+					}
+					out_file.seekp(area[0]);
+					out_file.write(file.second->data + area[0], area[1] - area[0]);
+					out_file.close();
 				}
-				out_file.write(file.second->data, file.second->size);
-				out_file.close();
 				file.second->need_flush = false;
 				LOGD("flush file success, file path is %s\n", get_real_path(file.first).c_str());
 			}

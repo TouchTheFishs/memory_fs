@@ -7,6 +7,7 @@
 #include <string>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <vector>
 
 struct MemoryFile {
 	std::shared_mutex rw_mutex;
@@ -20,6 +21,7 @@ struct MemoryFile {
 	time_t ctime = 0;
 	time_t mtime = 0;
 	time_t atime = 0;
+	std::vector<int64_t*>* write_areas;
 	std::set<std::string>* children;
 };
 
