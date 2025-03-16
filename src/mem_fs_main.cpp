@@ -645,9 +645,9 @@ void handleOption(int& argc, char**& argv)
 	int option_index = 0;
 	std::vector<char*> fuse_argv;
 	for (int i = 0; i < argc; i++) {
-		if (strcmp(argv[i], "--fs_log") == 0 && i + 1 < argc) {
+		if (strcmp(argv[i], "--log_level") == 0 && i + 1 < argc) {
 			set_log_level(argv[++i]);
-		} else if (strcmp(argv[i], "--targe") == 0 && i + 1 < argc) {
+		} else if (strcmp(argv[i], "--target") == 0 && i + 1 < argc) {
 			real_path_perfix = fs::absolute(argv[++i]);
 		} else {
 			fuse_argv.push_back(argv[i]);
