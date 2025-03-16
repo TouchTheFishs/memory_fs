@@ -5,7 +5,6 @@
 #include <chrono>
 #include <vector>
 #include <random>
-#include <algorithm>
 
 namespace fs = std::filesystem;
 using namespace std::chrono;
@@ -13,11 +12,18 @@ using namespace std::chrono;
 // 测试配置
 const std::string MOUNT_POINT = fs::absolute("test/mount_point").string();
 const std::string NATIVE_DIR = fs::absolute("test/native_dir").string();
+const size_t FILE_TOTAL_SIZE = 1 * 1024 * 1024 * (size_t)1024;
 const size_t FILE_SIZE_SMALL = 4 * 1024;        // 4KB
 const size_t FILE_SIZE_MEDIUM = 1 * 1024 * 1024; // 1MB
 const size_t FILE_SIZE_LARGE = 10 * 1024 * 1024; // 10MB
-const int NUM_FILES = 10;
+const int NUM_FILES_SMALL = FILE_TOTAL_SIZE / FILE_SIZE_SMALL;
+const int NUM_FILES_MEDIUM = FILE_TOTAL_SIZE / FILE_SIZE_MEDIUM;
+const int NUM_FILES_LARGE = FILE_TOTAL_SIZE / FILE_SIZE_LARGE;
 const int NUM_ITERATIONS = 5;
+
+double calculate_throughput(size_t total_bytes, double seconds) {
+    return (total_bytes / (1024.0 * 1024.0)) / seconds; // 转换为 MB/s
+}
 
 // 生成随机数据
 std::vector<char> generate_random_data(size_t size) {
@@ -121,20 +127,20 @@ void run_performance_tests() {
     double native_small_write_time = 0;
 
     for (int i = 0; i < NUM_ITERATIONS; i++) {
-        memfs_small_write_time += test_write_performance(MOUNT_POINT, small_data, NUM_FILES);
-        native_small_write_time += test_write_performance(NATIVE_DIR, small_data, NUM_FILES);
+        memfs_small_write_time += test_write_performance(MOUNT_POINT, small_data, NUM_FILES_SMALL);
+        native_small_write_time += test_write_performance(NATIVE_DIR, small_data, NUM_FILES_SMALL);
 
         // 清理文件
-        test_delete_performance(MOUNT_POINT, NUM_FILES);
-        test_delete_performance(NATIVE_DIR, NUM_FILES);
+        test_delete_performance(MOUNT_POINT, NUM_FILES_SMALL);
+        test_delete_performance(NATIVE_DIR, NUM_FILES_SMALL);
     }
 
     memfs_small_write_time /= NUM_ITERATIONS;
     native_small_write_time /= NUM_ITERATIONS;
 
     std::cout << "小文件(4KB)写入性能:" << std::endl;
-    std::cout << "  Memory FS: " << memfs_small_write_time << " 秒" << std::endl;
-    std::cout << "  本地文件系统: " << native_small_write_time << " 秒" << std::endl;
+    std::cout << "  Memory FS: " << calculate_throughput(FILE_TOTAL_SIZE, memfs_small_write_time) << " MB/s" << std::endl;
+    std::cout << "  本地文件系统: " << calculate_throughput(FILE_TOTAL_SIZE, native_small_write_time) << " MB/s" << std::endl;
     std::cout << "  性能比: " << (native_small_write_time / memfs_small_write_time) << "x" << std::endl;
 
     // 测试中等文件写入性能
@@ -142,20 +148,20 @@ void run_performance_tests() {
     double native_medium_write_time = 0;
 
     for (int i = 0; i < NUM_ITERATIONS; i++) {
-        memfs_medium_write_time += test_write_performance(MOUNT_POINT, medium_data, NUM_FILES);
-        native_medium_write_time += test_write_performance(NATIVE_DIR, medium_data, NUM_FILES);
+        memfs_medium_write_time += test_write_performance(MOUNT_POINT, medium_data, NUM_FILES_MEDIUM);
+        native_medium_write_time += test_write_performance(NATIVE_DIR, medium_data, NUM_FILES_MEDIUM);
 
         // 清理文件
-        test_delete_performance(MOUNT_POINT, NUM_FILES);
-        test_delete_performance(NATIVE_DIR, NUM_FILES);
+        test_delete_performance(MOUNT_POINT, NUM_FILES_MEDIUM);
+        test_delete_performance(NATIVE_DIR, NUM_FILES_MEDIUM);
     }
 
     memfs_medium_write_time /= NUM_ITERATIONS;
     native_medium_write_time /= NUM_ITERATIONS;
 
     std::cout << "中等文件(1MB)写入性能:" << std::endl;
-    std::cout << "  Memory FS: " << memfs_medium_write_time << " 秒" << std::endl;
-    std::cout << "  本地文件系统: " << native_medium_write_time << " 秒" << std::endl;
+    std::cout << "  Memory FS: " << calculate_throughput(FILE_TOTAL_SIZE, memfs_medium_write_time) << " MB/s" << std::endl;
+    std::cout << "  本地文件系统: " << calculate_throughput(FILE_TOTAL_SIZE, native_medium_write_time) << " MB/s" << std::endl;
     std::cout << "  性能比: " << (native_medium_write_time / memfs_medium_write_time) << "x" << std::endl;
 
     // 测试大文件写入性能
@@ -163,58 +169,58 @@ void run_performance_tests() {
     double native_large_write_time = 0;
 
     for (int i = 0; i < NUM_ITERATIONS; i++) {
-        memfs_large_write_time += test_write_performance(MOUNT_POINT, large_data, NUM_FILES);
-        native_large_write_time += test_write_performance(NATIVE_DIR, large_data, NUM_FILES);
+        memfs_large_write_time += test_write_performance(MOUNT_POINT, large_data, NUM_FILES_LARGE);
+        native_large_write_time += test_write_performance(NATIVE_DIR, large_data, NUM_FILES_LARGE);
 
         // 清理文件
-        test_delete_performance(MOUNT_POINT, NUM_FILES);
-        test_delete_performance(NATIVE_DIR, NUM_FILES);
+        test_delete_performance(MOUNT_POINT, NUM_FILES_LARGE);
+        test_delete_performance(NATIVE_DIR, NUM_FILES_LARGE);
     }
 
     memfs_large_write_time /= NUM_ITERATIONS;
     native_large_write_time /= NUM_ITERATIONS;
 
     std::cout << "大文件(10MB)写入性能:" << std::endl;
-    std::cout << "  Memory FS: " << memfs_large_write_time << " 秒" << std::endl;
-    std::cout << "  本地文件系统: " << native_large_write_time << " 秒" << std::endl;
+    std::cout << "  Memory FS: " << calculate_throughput(FILE_TOTAL_SIZE, memfs_large_write_time) << " MB/s" << std::endl;
+    std::cout << "  本地文件系统: " << calculate_throughput(FILE_TOTAL_SIZE, native_large_write_time) << " MB/s" << std::endl;
     std::cout << "  性能比: " << (native_large_write_time / memfs_large_write_time) << "x" << std::endl;
 
     // 测试读取性能
     // 先写入文件
-    test_write_performance(MOUNT_POINT, medium_data, NUM_FILES);
-    test_write_performance(NATIVE_DIR, medium_data, NUM_FILES);
+    test_write_performance(MOUNT_POINT, medium_data, NUM_FILES_LARGE);
+    test_write_performance(NATIVE_DIR, medium_data, NUM_FILES_LARGE);
 
     double memfs_read_time = 0;
     double native_read_time = 0;
 
     for (int i = 0; i < NUM_ITERATIONS; i++) {
-        memfs_read_time += test_read_performance(MOUNT_POINT, FILE_SIZE_MEDIUM, NUM_FILES);
-        native_read_time += test_read_performance(NATIVE_DIR, FILE_SIZE_MEDIUM, NUM_FILES);
+        memfs_read_time += test_read_performance(MOUNT_POINT, FILE_TOTAL_SIZE, NUM_FILES_LARGE);
+        native_read_time += test_read_performance(NATIVE_DIR, FILE_TOTAL_SIZE, NUM_FILES_LARGE);
     }
 
     memfs_read_time /= NUM_ITERATIONS;
     native_read_time /= NUM_ITERATIONS;
 
     std::cout << "文件读取性能(1MB):" << std::endl;
-    std::cout << "  Memory FS: " << memfs_read_time << " 秒" << std::endl;
-    std::cout << "  本地文件系统: " << native_read_time << " 秒" << std::endl;
+    std::cout << "  Memory FS: " << calculate_throughput(FILE_TOTAL_SIZE, memfs_read_time) << " MB/s" << std::endl;
+    std::cout << "  本地文件系统: " << calculate_throughput(FILE_TOTAL_SIZE, native_read_time) << " MB/s" << std::endl;
     std::cout << "  性能比: " << (native_read_time / memfs_read_time) << "x" << std::endl;
 
     // 清理文件
-    test_delete_performance(MOUNT_POINT, NUM_FILES);
-    test_delete_performance(NATIVE_DIR, NUM_FILES);
+    test_delete_performance(MOUNT_POINT, NUM_FILES_LARGE);
+    test_delete_performance(NATIVE_DIR, NUM_FILES_LARGE);
 
     // 测试目录操作性能
     double memfs_mkdir_time = 0;
     double native_mkdir_time = 0;
 
     for (int i = 0; i < NUM_ITERATIONS; i++) {
-        memfs_mkdir_time += test_mkdir_performance(MOUNT_POINT, NUM_FILES);
-        native_mkdir_time += test_mkdir_performance(NATIVE_DIR, NUM_FILES);
+        memfs_mkdir_time += test_mkdir_performance(MOUNT_POINT, NUM_FILES_SMALL);
+        native_mkdir_time += test_mkdir_performance(NATIVE_DIR, NUM_FILES_SMALL);
 
         // 清理目录
-        test_rmdir_performance(MOUNT_POINT, NUM_FILES);
-        test_rmdir_performance(NATIVE_DIR, NUM_FILES);
+        test_rmdir_performance(MOUNT_POINT, NUM_FILES_SMALL);
+        test_rmdir_performance(NATIVE_DIR, NUM_FILES_SMALL);
     }
 
     memfs_mkdir_time /= NUM_ITERATIONS;

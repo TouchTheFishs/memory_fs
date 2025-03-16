@@ -1,3 +1,4 @@
+#include <csignal>
 #include <cstring>
 #include <ctime>
 #include <dlfcn.h>
@@ -24,15 +25,28 @@ static pid_t get_tid()
 	}
 	return cached_tid;
 }
+
+// 全局日志文件指针
+FILE* log_file = nullptr;
+
+// 初始化日志文件，在程序开始时调用
+void init_log_file(const char* filename) {
+    log_file = fopen(filename, "a");  // 以追加模式打开文件
+    if (!log_file) {
+        LOGE("日志文件创建失败！");
+        exit(EXIT_FAILURE);
+    }
+}
+
 void set_log_level(char* level)
 {
-	if (strcmp(level, "d") == 0) {
+	if (strcmp(level, "debug") == 0) {
 		current_log_level = LOG_LEVEL_DEBUG;
-	} else if (strcmp(level, "i") == 0) {
+	} else if (strcmp(level, "info") == 0) {
 		current_log_level = LOG_LEVEL_INFO;
-	} else if (strcmp(level, "w") == 0) {
+	} else if (strcmp(level, "warn") == 0) {
 		current_log_level = LOG_LEVEL_WARNING;
-	} else if (strcmp(level, "e") == 0) {
+	} else if (strcmp(level, "error") == 0) {
 		current_log_level = LOG_LEVEL_ERROR;
 	} else {
 		current_log_level = LOG_LEVEL_NONE;
@@ -75,13 +89,21 @@ void log_message(LogLevel level, const char* file, int line, const char* func, c
 	struct tm* tm_now = localtime(&now);
 	char timestamp[20];
 	strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", tm_now);
-	const char* color = get_color(level);
-	printf("%s[%s][%d %d][%s][%s:%d][%s] ", color, timestamp, tid, pid, level_str, filename, line, func);
+	const char* color;
+	if (log_file == nullptr) {
+		color = get_color(level);
+	} else {
+		color = "";
+	}
+	FILE* out = (log_file != nullptr ? log_file : stdout);
+	fprintf(out, "%s[%s][%d %d][%s][%s:%d][%s] ", color, timestamp, pid, tid, level_str, filename, line, func);
 	va_list args;
 	va_start(args, format);
-	vprintf(format, args);
+	vfprintf(out, format, args);
 	va_end(args);
-	printf(RESET "\n");
+	if (log_file == nullptr) {
+		fprintf(out, RESET "\n");
+	}
 }
 
 #define MAX_STACK_FRAMES 64
@@ -91,13 +113,14 @@ void dump_backtrace()
 	void* buffer[MAX_STACK_FRAMES];
 	const int frames = backtrace(buffer, MAX_STACK_FRAMES);
 	const pid_t tid = static_cast<pid_t>(syscall(SYS_gettid));
-	fprintf(stderr, "\n[线程 %d] 调用栈追踪 (共 %d 帧):\n", tid, frames);
+	FILE* out = (log_file != nullptr ? log_file : stdout);
+	fprintf(out, "\n[线程 %d] 调用栈追踪 (共 %d 帧):\n", tid, frames);
 
 	for (int i = 0; i < frames; ++i) {
 		Dl_info info = {};
 		const bool dladdr_ok = dladdr(buffer[i], &info);
 
-		fprintf(stderr, "#%-2d ", i);  // 序号与内容间留1空格
+		fprintf(out, "#%-2d ", i);  // 序号与内容间留1空格
 
 		if (dladdr_ok && info.dli_fname) {
 			// 精简路径处理
@@ -107,10 +130,10 @@ void dump_backtrace()
 			// 计算相对偏移
 			const size_t offset = reinterpret_cast<size_t>(buffer[i]) - reinterpret_cast<size_t>(info.dli_fbase);
 
-			fprintf(stderr, "%-16s 0x%012zX", base_name, reinterpret_cast<size_t>(info.dli_fbase));
+			fprintf(out, "%-16s 0x%012zX", base_name, reinterpret_cast<size_t>(info.dli_fbase));
 
 			// 显示紧凑的偏移量
-			fprintf(stderr, "+0x%-7zx ", offset);
+			fprintf(out, "+0x%-7zx ", offset);
 
 			free(fname_copy);
 
@@ -122,7 +145,7 @@ void dump_backtrace()
 				demangled = abi::__cxa_demangle(info.dli_sname, nullptr, nullptr, &status);
 				symbol = (status == 0) ? demangled : info.dli_sname;
 			}
-			fprintf(stderr, "@ %-20s", symbol);
+			fprintf(out, "@ %-20s", symbol);
 
 			// 使用 addr2line 解析行号信息
 			char cmd[1024];
@@ -132,7 +155,7 @@ void dump_backtrace()
 				char line[512] = "";
 				if (fgets(line, sizeof(line), fp) && !strstr(line, "??")) {
 					line[strcspn(line, "\n")] = '\0';				// 去除换行符
-					fprintf(stderr, " \033[33m(%s)\033[0m", line);	// 黄色高亮
+					fprintf(out, " \033[33m(%s)\033[0m", line);	// 黄色高亮
 				}
 				pclose(fp);
 			}
@@ -142,23 +165,25 @@ void dump_backtrace()
 
 			// 显示符号地址
 			if (info.dli_saddr) {
-				fprintf(stderr, " [sym:0x%012zX]", reinterpret_cast<size_t>(info.dli_saddr));
+				fprintf(out, " [sym:0x%012zX]", reinterpret_cast<size_t>(info.dli_saddr));
 			}
 		} else {
 			// 无法解析时显示原始地址
-			fprintf(stderr, "<无法解析> [0x%14p]", buffer[i]);
+			fprintf(out, "<无法解析> [0x%14p]", buffer[i]);
 		}
 
-		fprintf(stderr, "\n");
+		fprintf(out, "\n");
 	}
-	fflush(stderr);
 }
 
 void signal_handler(int sig)
 {
-	fprintf(stderr, "\n程序崩溃，信号: %d\n", sig);
+	FILE* out = (log_file != nullptr ? log_file : stdout);
+	fprintf(out, "\n程序崩溃，信号: %d\n", sig);
 	dump_backtrace();
-	exit(1);
+	fflush(out);
+	std::signal(sig, SIG_DFL);
+    std::raise(sig);
 }
 
 void setup_signal_handlers()

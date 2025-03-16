@@ -432,6 +432,7 @@ static int memfs_create(const char* path, mode_t mode, struct fuse_file_info* fi
 		unique_lock<std::shared_mutex> lock(rw_mutex);
 		files[path] = std::move(file);
 	}
+	fi->fh = init_fd(path, fi->flags, file);
 	return 0;
 }
 
@@ -463,10 +464,12 @@ static int memfs_write(const char* path, const char* buf, size_t size, off_t off
 {
 	LOGD("write %s\n", path);
 	if (fi->fh == -1 || fi->fh >= fd_vec.size() || fd_vec[fi->fh].file == nullptr) {
+		LOGE("write failed, fd is invalid\n");
 		return -EBADF;
 	}
 	MemoryFile* file = fd_vec[fi->fh].file;
 	if (file == nullptr) {
+		LOGE("write failed, file is null\n");
 		return -EBADF;
 	}
 	unique_lock<shared_mutex> lock(file->rw_mutex);
@@ -497,6 +500,7 @@ static int memfs_write(const char* path, const char* buf, size_t size, off_t off
 	file->write_areas->push_back(new_area);
 	file->need_flush = true;
 	std::memcpy(file->data + offset, buf, size);
+	LOGD("write success, write size is %zu\n", size);
 	return size;
 }
 
@@ -649,6 +653,18 @@ void handleOption(int& argc, char**& argv)
 			set_log_level(argv[++i]);
 		} else if (strcmp(argv[i], "--target") == 0 && i + 1 < argc) {
 			real_path_perfix = fs::absolute(argv[++i]);
+		} else if (strcmp(argv[i], "--save_log") == 0 && i + 1 < argc) {
+			if (strcmp(argv[++i], "true") == 0) {
+				std::time_t t = std::time(nullptr);
+				std::tm tm = *std::localtime(&t);
+				char timestamp[20];
+				strftime(timestamp, sizeof(timestamp), "%Y-%m-%d_%H-%M-%S", &tm);
+				std::string log_file_name = "mem_fs_" + std::string(timestamp) + ".log";
+				init_log_file(log_file_name.c_str());
+				LOGI("日志文件已初始化: %s\n", log_file_name.c_str());
+			} else {
+				LOGI("不保存日志文件\n");
+			}
 		} else {
 			fuse_argv.push_back(argv[i]);
 		}

@@ -16,5 +16,6 @@ extern LogLevel current_log_level;
 void set_log_level(char* level);
 void setup_signal_handlers();
 void handleOption(int& argc, char**& argv);
+void init_log_file(const char* filename);
 
 #endif	// MEM_FS_UTILS_H

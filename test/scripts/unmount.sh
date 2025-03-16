@@ -1,11 +1,13 @@
 #!/bin/bash
+SCRIPT_DIR=$(dirname "$(realpath "${BASH_SOURCE[0]}")")
 echo "卸载 memory_fs..."
-# 如果存在PID文件，则使用它来终止进程
-if [ -f ../memory_fs.pid ]; then
-    kill $(cat ../memory_fs.pid)
-    rm ../memory_fs.pid
-fi
 # 使用fusermount命令卸载FUSE文件系统
-fusermount -u ../mount_point
+umount "$SCRIPT_DIR/../mount_point"
 sleep 2
-echo "FUSE 文件系统已卸载"
+# 检查文件系统是否已卸载
+if ! mountpoint -q "$SCRIPT_DIR/../mount_point"; then
+    echo "卸载成功"
+else
+    echo "卸载失败"
+    echo "请检查是否在正确的挂载点操作"
+fi
