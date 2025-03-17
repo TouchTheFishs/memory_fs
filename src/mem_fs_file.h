@@ -21,6 +21,7 @@ struct MemoryFile {
 	time_t ctime = 0;
 	time_t mtime = 0;
 	time_t atime = 0;
+	off_t offset = 0;
 	std::vector<int64_t*>* write_areas;
 	std::set<std::string>* children;
 };

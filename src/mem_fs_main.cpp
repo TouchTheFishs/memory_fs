@@ -457,6 +457,9 @@ static int memfs_read(const char* path, char* buf, size_t size, off_t offset, st
 	if (bytes_to_read > 0) {
 		memcpy(buf, file->data + offset, bytes_to_read);
 	}
+	lock.unlock();
+	unique_lock<shared_mutex> writeLock(file->rw_mutex);
+	file->offset = offset + bytes_to_read;
 	return bytes_to_read;
 }
 
@@ -500,6 +503,7 @@ static int memfs_write(const char* path, const char* buf, size_t size, off_t off
 	file->write_areas->push_back(new_area);
 	file->need_flush = true;
 	std::memcpy(file->data + offset, buf, size);
+	file->offset = offset + size;
 	LOGD("write success, write size is %zu\n", size);
 	return size;
 }
@@ -592,6 +596,41 @@ static int memfs_unlink(const char* path)
 	return 0;
 }
 
+static off_t memfs_lseek(const char* path, off_t offset, int whence, struct fuse_file_info* fi)
+{
+	LOGD("lseek %s\n", path);
+	if (fi->fh == -1 || fi->fh >= fd_vec.size() || fd_vec[fi->fh].file == nullptr) {
+		return -EBADF;
+	}
+	MemoryFile* file = fd_vec[fi->fh].file;
+	if (file == nullptr) {
+		return -EBADF;
+	}
+	shared_lock<shared_mutex> readLock(file->rw_mutex);
+	switch (whence) {
+	case SEEK_SET:
+		if (offset < 0) {
+			return -EINVAL;
+		}
+		break;
+	case SEEK_CUR:
+		offset += file->offset;
+		break;
+	case SEEK_END:
+		if (offset + file->size < 0) {
+			return -EINVAL;
+		}
+		offset += file->size;
+		break;
+	default:
+		return -EINVAL;
+	}
+	readLock.unlock();
+	unique_lock<shared_mutex> lock(file->rw_mutex);
+	file->offset = offset;
+	return offset;
+}
+
 static void* memfs_init(struct fuse_conn_info* conn, struct fuse_config* cfg)
 {
 	(void)conn;
@@ -616,6 +655,7 @@ static struct fuse_operations memfs_ops = {
 	.init = memfs_init,
 	.create = memfs_create,
 	.utimens = memfs_utimens,
+	.lseek = memfs_lseek,
 };
 
 static void flush_files()

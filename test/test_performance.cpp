@@ -12,7 +12,7 @@ using namespace std::chrono;
 // 测试配置
 const std::string MOUNT_POINT = fs::absolute("test/mount_point").string();
 const std::string NATIVE_DIR = fs::absolute("test/native_dir").string();
-const size_t FILE_TOTAL_SIZE = 1 * 1024 * 1024 * (size_t)1024;
+const size_t FILE_TOTAL_SIZE = 1024 * 1024 * (size_t)1024;
 const size_t FILE_SIZE_SMALL = 4 * 1024;        // 4KB
 const size_t FILE_SIZE_MEDIUM = 1 * 1024 * 1024; // 1MB
 const size_t FILE_SIZE_LARGE = 10 * 1024 * 1024; // 10MB
@@ -187,15 +187,15 @@ void run_performance_tests() {
 
     // 测试读取性能
     // 先写入文件
-    test_write_performance(MOUNT_POINT, medium_data, NUM_FILES_LARGE);
-    test_write_performance(NATIVE_DIR, medium_data, NUM_FILES_LARGE);
+    test_write_performance(MOUNT_POINT, medium_data, NUM_FILES_MEDIUM);
+    test_write_performance(NATIVE_DIR, medium_data, NUM_FILES_MEDIUM);
 
     double memfs_read_time = 0;
     double native_read_time = 0;
 
     for (int i = 0; i < NUM_ITERATIONS; i++) {
-        memfs_read_time += test_read_performance(MOUNT_POINT, FILE_TOTAL_SIZE, NUM_FILES_LARGE);
-        native_read_time += test_read_performance(NATIVE_DIR, FILE_TOTAL_SIZE, NUM_FILES_LARGE);
+        memfs_read_time += test_read_performance(MOUNT_POINT, FILE_SIZE_MEDIUM, NUM_FILES_MEDIUM);
+        native_read_time += test_read_performance(NATIVE_DIR, FILE_SIZE_MEDIUM, NUM_FILES_MEDIUM);
     }
 
     memfs_read_time /= NUM_ITERATIONS;

@@ -5,6 +5,8 @@
 #include <cassert>
 #include <cstring>
 #include <vector>
+#include <unistd.h>
+#include <fcntl.h>
 
 namespace fs = std::filesystem;
 
@@ -281,6 +283,43 @@ bool test_large_file_operations()
 	return true;
 }
 
+bool test_truncate()
+{
+	std::cout << "=== 测试截断操作 ===" << std::endl;
+
+	// 创建测试文件
+	std::string test_file = MOUNT_POINT + "/test_file.txt";
+	std::string test_content = "这是原始文件";
+	FileGuard guard(test_file);
+	create_test_file(test_file, test_content);
+
+	// 打开文件
+	auto fd = open(test_file.c_str(), O_RDWR | O_TRUNC);
+	if (fd < 0) {
+		std::cerr << "无法打开文件进行截断: " << test_file << std::endl;
+		return false;
+	}
+	// 截断文件
+	const size_t new_size = 5;
+	lseek(fd, 0, SEEK_SET);
+	ftruncate(fd, new_size);
+	close(fd);
+	// 验证文件大小
+	if (fs::file_size(test_file) != new_size) {
+		std::cerr << "文件截断大小验证失败" << std::endl;
+		return false;
+	}
+	std::cout << "✓ 文件截断成功" << std::endl;
+
+	// 验证文件内容
+	if (!verify_file_content(test_file, test_content.substr(0, new_size))) {
+		std::cerr << "文件截断内容验证失败" << std::endl;
+		return false;
+	}
+	std::cout << "✓ 文件截断内容验证成功" << std::endl;
+	return true;
+}
+
 // 主函数
 int main()
 {
@@ -293,6 +332,7 @@ int main()
 	all_tests_passed &= test_directory_operations();
 	all_tests_passed &= test_rename_operations();
 	all_tests_passed &= test_large_file_operations();
+	all_tests_passed &= test_truncate();
 
 	if (all_tests_passed) {
 		std::cout << "\n所有测试通过！" << std::endl;
